@@ -1,0 +1,37 @@
+{
+  "senna": [
+    {"text": "Ayrton Senna won three Formula 1 World Championships, in 1988, 1990, and 1991, all with McLaren.", "year": 1991, "category": "legacy"},
+    {"text": "Senna set a career record for pole positions that stood for over a decade after his death.", "year": 1994, "category": "record"},
+    {"text": "He died in a crash at the 1994 San Marino Grand Prix at Imola, a weekend that led to sweeping F1 safety reforms.", "year": 1994, "category": "history"},
+    {"text": "Senna was famous for his qualifying pace in wet conditions, earning him a reputation as the best wet weather driver of his era.", "year": 1988, "category": "skill"},
+    {"text": "He and Alain Prost had one of the most intense rivalries in F1 history while teammates at McLaren in 1988 and 1989.", "year": 1989, "category": "rivalry"}
+  ],
+  "schumacher": [
+    {"text": "Michael Schumacher won seven Formula 1 World Championships, a record Lewis Hamilton did not match until 2020.", "year": 2004, "category": "record"},
+    {"text": "Five of Schumacher's titles came consecutively with Ferrari from 2000 to 2004.", "year": 2004, "category": "legacy"},
+    {"text": "He won 91 Grand Prix races, a record that stood until Hamilton passed it in 2020.", "year": 2006, "category": "record"},
+    {"text": "Schumacher pioneered modern data driven race preparation and physical conditioning in Formula 1.", "year": 2000, "category": "innovation"},
+    {"text": "His son Mick Schumacher also raced in Formula 1, driving for Haas in 2021 and 2022.", "year": 2022, "category": "legacy"}
+  ],
+  "monaco-gp": [
+    {"text": "The Monaco Grand Prix has been run since 1929, making it one of the oldest races in motorsport.", "year": 1929, "category": "history"},
+    {"text": "The circuit is just over 3.3 kilometers, the shortest on the current F1 calendar.", "year": null, "category": "track"},
+    {"text": "Overtaking is famously difficult at Monaco, qualifying position often decides the race result.", "year": null, "category": "track"},
+    {"text": "Ayrton Senna won the Monaco Grand Prix six times, a record that still stands.", "year": 1993, "category": "record"},
+    {"text": "The race runs through the streets of Monte Carlo, past the harbor where spectators watch from yachts.", "year": null, "category": "atmosphere"}
+  ],
+  "hamilton-verstappen-2021": [
+    {"text": "The 2021 title fight between Lewis Hamilton and Max Verstappen went to the final lap of the final race.", "year": 2021, "category": "rivalry"},
+    {"text": "The season included multiple high profile collisions between the two drivers, including at Silverstone and Monza.", "year": 2021, "category": "rivalry"},
+    {"text": "The finale at Abu Dhabi ended in a controversial late safety car call that set up a last lap decider.", "year": 2021, "category": "controversy"},
+    {"text": "Verstappen passed Hamilton on the final lap to win his first World Championship.", "year": 2021, "category": "history"},
+    {"text": "The controversy led the FIA to restructure race control procedures for the following season.", "year": 2022, "category": "aftermath"}
+  ],
+  "ground-effect-2022": [
+    {"text": "The 2022 season introduced a major regulation overhaul built around ground effect aerodynamics, the biggest shake up since 1983.", "year": 2022, "category": "regulation"},
+    {"text": "Many cars suffered a violent bouncing phenomenon called porpoising in early 2022, caused by the new floors stalling and reattaching airflow at speed.", "year": 2022, "category": "engineering"},
+    {"text": "The rules were designed to let cars follow more closely by reducing the turbulent wake produced by the car ahead.", "year": 2022, "category": "regulation"},
+    {"text": "Red Bull and Ferrari set the pace under the new rules, with Max Verstappen winning his second title.", "year": 2022, "category": "history"},
+    {"text": "The FIA issued mid season technical directives on floor stiffness to address porpoising safety concerns.", "year": 2022, "category": "regulation"}
+  ]
+}
