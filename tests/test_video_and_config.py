@@ -39,13 +39,13 @@ def test_voxel_background_is_animated():
 def test_voxel_background_is_deterministic_for_same_seed():
     a = VoxelDropBackground(seed=42).frame(5, 0.4)
     b = VoxelDropBackground(seed=42).frame(5, 0.4)
-    assert list(a.getdata()) == list(b.getdata())
+    assert a.tobytes() == b.tobytes()
 
 
 def test_voxel_background_differs_by_seed():
     a = VoxelDropBackground(seed=1).frame(0, 2.0)
     b = VoxelDropBackground(seed=2).frame(0, 2.0)
-    assert list(a.getdata()) != list(b.getdata())
+    assert a.tobytes() != b.tobytes()
 
 
 def test_voxel_background_settles_after_drop_window():
