@@ -1,5 +1,7 @@
 # F1 Facts Pipeline
 
+[![tests](https://github.com/dragonblade3k/content-pipeline/actions/workflows/tests.yml/badge.svg)](https://github.com/dragonblade3k/content-pipeline/actions/workflows/tests.yml)
+
 A small, real, end to end content generation pipeline: give it a topic, it researches facts, writes a script, generates narration, and renders a finished vertical video with synced captions, ready for Shorts, Reels, or TikTok.
 
 ```
@@ -160,6 +162,10 @@ python3 -m pytest tests/ -v
 ```
 
 Tests cover the pure logic stages (research, script generation, metadata). The subprocess backed stages (`tts.py`, `video.py`) are exercised by actually running the CLI rather than mocked, since the point of this project is that the pipeline really produces a real file, not that it appears to.
+
+`pytest` needs `Pillow` alongside it, since `video.py` renders the caption cards with it and the video tests import that module. `pip install -r requirements.txt` covers it; installing `pytest` on its own into a bare environment does not.
+
+The same command runs in GitHub Actions on every pull request and every push to `main` (`.github/workflows/tests.yml`), on Python 3.10, installing only `Pillow` and `pytest`. The other two entries in `requirements.txt`, `piper-tts` and `anthropic`, are upgrade path extras that no test reaches, and installing them in CI would drag `torch` into every run for no coverage.
 
 ## Honest limitations
 

@@ -1,0 +1,30 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # Deliberately not `pip install -r requirements.txt`. That file lists
+      # piper-tts and anthropic, which are upgrade-path extras for the voice
+      # and script stages; both are imported lazily and neither is reachable
+      # from the test suite, so installing them would pull torch into every
+      # run for no added coverage. Pillow is a real test dependency, the
+      # video stage renders caption cards with it.
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install Pillow pytest
+
+      - name: Run tests
+        run: python -m pytest -q
