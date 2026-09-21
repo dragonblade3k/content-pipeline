@@ -34,6 +34,7 @@ from typing import List, Optional
 import math
 import random
 import subprocess
+import warnings
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -53,10 +54,34 @@ _BLOCK_COLORS = [
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    """
+    DejaVu is the intended caption face. If the absolute path misses,
+    Pillow's truetype() also searches the system font directories by
+    file name, so this only falls through when DejaVu isn't installed
+    anywhere Pillow looks, which is the normal state of a stock Windows
+    or macOS machine. The fallback must keep the requested size:
+    load_default() with no argument is a roughly 10px face, which on a
+    1080x1920 frame yields a finished mp4 whose captions nobody can
+    read, with nothing reporting that anything went wrong.
+    """
     name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
     try:
         return ImageFont.truetype(f"{_FONT_DIR}/{name}", size)
     except OSError:
+        pass
+    warnings.warn(
+        f"{name} not found in {_FONT_DIR} or the system font directories, "
+        "falling back to Pillow's built-in font. Captions will render, but "
+        "install DejaVu (e.g. the fonts-dejavu-core package) for the "
+        "intended typeface.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        # Pillow < 10.1 has no size parameter; requirements.txt still
+        # allows 10.0, so degrade to the small bitmap face there.
         return ImageFont.load_default()
 
 
