@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 from PIL import Image
 
+import pipeline.video as video
 from pipeline.video import SolidBackground, VoxelDropBackground, WIDTH, HEIGHT
 
 
@@ -92,3 +93,37 @@ def test_music_path_from_env_returns_path(monkeypatch, tmp_path):
     from pipeline.config import music_path_from_env
 
     assert music_path_from_env() == tmp_path / "track.mp3"
+
+
+def _text_height(font, text="Ayrton Senna"):
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    top, bottom = draw.textbbox((0, 0), text, font=font)[1::2]
+    return bottom - top
+
+
+def test_load_font_fallback_keeps_requested_size_and_warns(monkeypatch):
+    """With DejaVu missing, the fallback used to be Pillow's ~10px default,
+    so a 64px caption silently rendered unreadably small. It must now warn
+    and still come back at roughly the size asked for."""
+    real_truetype = video.ImageFont.truetype
+
+    def missing(font=None, *args, **kwargs):
+        # Only file lookups fail; load_default(size=...) itself goes
+        # through truetype() with an in-memory font and must still work.
+        if isinstance(font, (str, Path)):
+            raise OSError("cannot open resource")
+        return real_truetype(font, *args, **kwargs)
+
+    monkeypatch.setattr(video.ImageFont, "truetype", missing)
+    with pytest.warns(RuntimeWarning, match="DejaVuSans-Bold.ttf"):
+        font = video._load_font(64, bold=True)
+    assert _text_height(font) > 32
+
+
+def test_load_font_does_not_warn_when_dejavu_loads(monkeypatch, recwarn):
+    sentinel = object()
+    monkeypatch.setattr(video.ImageFont, "truetype", lambda *a, **k: sentinel)
+    assert video._load_font(40) is sentinel
+    assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
