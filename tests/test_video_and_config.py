@@ -127,3 +127,42 @@ def test_load_font_does_not_warn_when_dejavu_loads(monkeypatch, recwarn):
     monkeypatch.setattr(video.ImageFont, "truetype", lambda *a, **k: sentinel)
     assert video._load_font(40) is sentinel
     assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
+
+
+def _stub_line(tmp_path):
+    from pipeline.tts import VoiceLine
+
+    return VoiceLine(text="Senna took pole", wav_path=tmp_path / "line_00.wav", duration_seconds=1.0)
+
+
+def test_assemble_video_rejects_missing_music_before_rendering(monkeypatch, tmp_path):
+    """The music path used to be checked only at mix time, i.e. after every
+    frame had been drawn, encoded and concatenated. A bad path must now be
+    reported before the first segment is rendered."""
+    rendered = []
+    monkeypatch.setattr(video, "_render_line_segment", lambda *a, **k: rendered.append(a))
+
+    with pytest.raises(FileNotFoundError, match="doesn't exist"):
+        video.assemble_video(
+            [_stub_line(tmp_path)],
+            label="senna",
+            work_dir=tmp_path / "frames",
+            out_path=tmp_path / "out.mp4",
+            music_path=tmp_path / "nope.mp3",
+        )
+
+    assert rendered == []
+    assert not (tmp_path / "frames").exists()
+
+
+def test_resolve_music_path_rejects_a_directory(tmp_path):
+    """exists() is true for a directory, so the old check let one through to
+    ffmpeg, which failed at the very end of the run instead."""
+    with pytest.raises(FileNotFoundError, match="is a directory"):
+        video._resolve_music_path(tmp_path)
+
+
+def test_resolve_music_path_accepts_a_real_file(tmp_path):
+    track = tmp_path / "track.mp3"
+    track.write_bytes(b"not really an mp3, but it is a file")
+    assert video._resolve_music_path(str(track)) == track

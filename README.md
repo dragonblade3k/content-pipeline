@@ -127,7 +127,7 @@ export PIPELINE_MUSIC_PATH=/path/to/track.mp3
 python3 cli.py --topic senna
 ```
 
-`assemble_video` builds the captioned video exactly as before, then runs one more ffmpeg pass that loops the track if it's shorter than the clip, ducks it to 12% volume so it sits under the narration instead of competing with it, and mixes rather than replaces the narration track. No track ships with this repo; `PIPELINE_MUSIC_PATH` unset means silent background music, same as before this feature existed.
+`assemble_video` builds the captioned video exactly as before, then runs one more ffmpeg pass that loops the track if it's shorter than the clip, ducks it to 12% volume so it sits under the narration instead of competing with it, and mixes rather than replaces the narration track. No track ships with this repo; `PIPELINE_MUSIC_PATH` unset means silent background music, same as before this feature existed. If it's set but doesn't point at a file, `assemble_video` raises before it renders the first frame rather than at mix time, so a typo costs you a second and not a full render.
 
 Stack everything:
 

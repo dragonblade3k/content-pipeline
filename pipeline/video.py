@@ -245,6 +245,29 @@ def _render_line_segment(vl: VoiceLine, label: str, background: BackgroundRender
     return segment_path
 
 
+def _resolve_music_path(music_path) -> Path:
+    """
+    Validated up front by assemble_video, not at mix time. Mixing is the
+    last thing assemble_video does, so checking the path there means a
+    typo in PIPELINE_MUSIC_PATH is only reported after every caption
+    frame has been drawn, encoded and concatenated. On the voxel
+    background that is hundreds of full 1080x1920 frames per line, all
+    of it discarded for a path that was knowable before the first frame.
+
+    is_file() rather than exists(): a directory exists, so the old check
+    passed one straight through to ffmpeg, which then failed at the end
+    of the run with its own message about an invalid input instead.
+    """
+    path = Path(music_path)
+    if not path.is_file():
+        detail = "is a directory, not a file" if path.is_dir() else "doesn't exist"
+        raise FileNotFoundError(
+            f"PIPELINE_MUSIC_PATH points at {path}, which {detail}. "
+            "See README 'Adding background music' for where to get a free track."
+        )
+    return path
+
+
 def _mix_in_music(video_path: Path, music_path: Path, out_path: Path) -> Path:
     """
     Loops the track if it's shorter than the video, ducks it to well
@@ -277,6 +300,8 @@ def assemble_video(
     music_path: Optional[Path] = None,
 ) -> Path:
     background = background or SolidBackground()
+    # Before anything is rendered, see _resolve_music_path.
+    music_path = _resolve_music_path(music_path) if music_path else None
     work_dir.mkdir(parents=True, exist_ok=True)
 
     segment_paths = [
@@ -298,12 +323,6 @@ def assemble_video(
     )
 
     if music_path:
-        music_path = Path(music_path)
-        if not music_path.exists():
-            raise FileNotFoundError(
-                f"PIPELINE_MUSIC_PATH points at {music_path}, which doesn't exist. "
-                "See README 'Adding background music' for where to get a free track."
-            )
         _mix_in_music(concat_target, music_path, out_path)
 
     return out_path
