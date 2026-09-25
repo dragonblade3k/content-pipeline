@@ -46,6 +46,39 @@ def _wav_duration(path: Path) -> float:
         return w.getnframes() / w.getframerate()
 
 
+def _run_voice_tool(cmd: List[str], install_hint: str, stdin: Optional[bytes] = None) -> None:
+    """
+    Run a voice backend's binary and turn its two failure modes into the
+    kind of error the rest of this project raises.
+
+    Every other stage that depends on something external says what went
+    wrong and what to do about it: a missing ANTHROPIC_API_KEY, an
+    unreachable Ollama, a missing Piper model. The subprocess backed
+    stages were the exception. `capture_output=True` sends the tool's
+    own stderr somewhere nobody ever reads it, so a failing espeak-ng
+    surfaced only as "returned non-zero exit status 1" with its actual
+    complaint discarded, and a missing binary surfaced as a bare
+    FileNotFoundError naming the executable and nothing else.
+
+    stderr is still captured rather than inherited, so a successful run
+    stays quiet on the terminal. It is now attached to the exception
+    instead of dropped.
+    """
+    try:
+        subprocess.run(cmd, input=stdin, check=True, capture_output=True)
+    except FileNotFoundError as e:
+        raise FileNotFoundError(
+            f"'{cmd[0]}' is not installed or not on PATH. {install_hint}"
+        ) from e
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or b"").decode("utf-8", "replace").strip()
+        tail = "\n".join(detail.splitlines()[-10:])
+        raise RuntimeError(
+            f"'{cmd[0]}' failed with exit status {e.returncode}."
+            + (f" It reported:\n{tail}" if tail else " It wrote nothing to stderr.")
+        ) from e
+
+
 class EspeakVoice(VoiceSynth):
     """Local, offline, no key, no model download. The default for this project."""
 
@@ -58,10 +91,9 @@ class EspeakVoice(VoiceSynth):
         results = []
         for i, text in enumerate(lines):
             wav_path = out_dir / f"line_{i:02d}.wav"
-            subprocess.run(
+            _run_voice_tool(
                 ["espeak-ng", "-v", self._voice, "-s", str(self._speed), "-w", str(wav_path), text],
-                check=True,
-                capture_output=True,
+                install_hint="Install it with: sudo apt-get install -y espeak-ng",
             )
             results.append(
                 VoiceLine(text=text, wav_path=wav_path, duration_seconds=_wav_duration(wav_path))
@@ -92,11 +124,10 @@ class PiperVoice(VoiceSynth):
         results = []
         for i, text in enumerate(lines):
             wav_path = out_dir / f"line_{i:02d}.wav"
-            subprocess.run(
+            _run_voice_tool(
                 ["piper", "-m", str(self._model_path), "-c", str(self._config_path), "-f", str(wav_path)],
-                input=text.encode("utf-8"),
-                check=True,
-                capture_output=True,
+                install_hint="Install it with: pip install piper-tts (it is in requirements.txt).",
+                stdin=text.encode("utf-8"),
             )
             results.append(
                 VoiceLine(text=text, wav_path=wav_path, duration_seconds=_wav_duration(wav_path))

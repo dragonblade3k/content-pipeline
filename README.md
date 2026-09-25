@@ -161,7 +161,7 @@ pip install pytest
 python3 -m pytest tests/ -v
 ```
 
-Tests cover the pure logic stages (research, script generation, metadata). The subprocess backed stages (`tts.py`, `video.py`) are exercised by actually running the CLI rather than mocked, since the point of this project is that the pipeline really produces a real file, not that it appears to.
+Tests cover the pure logic stages (research, script generation, metadata), the background renderers, and the error contract around the subprocess backed stages: what `tts.py` and `video.py` do when a binary is missing, a path is wrong, or a tool exits non-zero. The synthesis and encoding themselves are still exercised by actually running the CLI rather than mocked, since the point of this project is that the pipeline really produces a real file, not that it appears to.
 
 `pytest` needs `Pillow` alongside it, since `video.py` renders the caption cards with it and the video tests import that module. `pip install -r requirements.txt` covers it; installing `pytest` on its own into a bare environment does not.
 
