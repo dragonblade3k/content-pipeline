@@ -142,3 +142,51 @@ def test_ollama_script_prompt_requests_exact_fact_count():
     prompt = _ollama_script_prompt("senna", facts)
     assert "exactly 3 sentences" in prompt
     assert "Fact A" in prompt and "Fact B" in prompt and "Fact C" in prompt
+
+
+def test_script_from_ollama_response_rejects_string_body():
+    """
+    The real hazard behind the schema. A model writing the body as one
+    string instead of an array is valid JSON, and iterating a string
+    yields its characters, so this used to parse "happily" into one
+    spoken line per character: a script of 28 single letters, each one
+    narrated and encoded as its own video segment. Nothing downstream
+    validates line count or length, so the only place this can be
+    caught is here.
+    """
+    raw = '{"hook": "A hook.", "body": "He won nine races. He finished P1.", "cta": "Follow."}'
+    with pytest.raises(ValueError, match="list of strings"):
+        _script_from_ollama_response(raw)
+
+
+def test_script_from_ollama_response_rejects_non_string_body_entries():
+    with pytest.raises(ValueError, match="list of strings"):
+        _script_from_ollama_response('{"hook": "A hook.", "body": [1, 2], "cta": "Follow."}')
+
+
+def test_script_from_ollama_response_rejects_non_object_json():
+    """
+    Valid JSON that isn't an object at all: parsed.get() used to raise a
+    bare AttributeError from inside the parser rather than this module's
+    own error, which told you nothing about what the model did wrong.
+    """
+    for raw in ['"just a sentence"', "null", '["a", "b"]']:
+        with pytest.raises(ValueError, match="asks for an object"):
+            _script_from_ollama_response(raw)
+
+
+def test_script_from_ollama_response_rejects_non_string_hook():
+    with pytest.raises(ValueError, match="'hook' must be a string"):
+        _script_from_ollama_response('{"hook": 5, "body": ["Fact one."], "cta": "Follow."}')
+
+
+def test_script_from_ollama_response_keeps_accepting_a_conforming_body():
+    """
+    The guard must not narrow what already worked: blank and whitespace
+    only entries are still dropped rather than rejected, since the
+    previous parser tolerated them and a model padding its array is not
+    a malformed response.
+    """
+    raw = '{"hook": "A hook.", "body": ["Fact one.", "", "   ", "Fact two."], "cta": "Follow."}'
+    script = _script_from_ollama_response(raw)
+    assert script.lines == ["Fact one.", "Fact two."]
