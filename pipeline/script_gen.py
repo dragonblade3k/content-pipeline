@@ -195,9 +195,12 @@ class OllamaScriptGenerator(ScriptGenerator):
     reliable at following a text formatting instruction at all.
 
     The actual fix: Ollama's `format` field accepts a JSON schema and
-    constrains decoding to match it, so the model cannot produce
-    something that fails to parse, it's not a request the model can
-    ignore. Verified end to end, valid JSON on every run. Claude, by
+    constrains decoding to match it, so free prose stops being a
+    possible answer, it's not a request the model can ignore. Verified
+    end to end, valid JSON on every run. It is not a guarantee the
+    parser can lean on, though, which is why
+    _script_from_ollama_response validates the decoded shape rather
+    than assuming it, see its docstring. Claude, by
     contrast, followed the plain text instruction correctly every
     time in this project, so AnthropicScriptGenerator above never
     needed this, that gap between the two is itself worth remembering.
@@ -237,7 +240,25 @@ class OllamaScriptGenerator(ScriptGenerator):
 
 
 def _script_from_ollama_response(raw_response: str) -> Script:
-    """Pulled out of generate() so it's testable without a real Ollama call."""
+    """
+    Pulled out of generate() so it's testable without a real Ollama call.
+
+    Valid JSON is not the same thing as JSON in the shape
+    _OLLAMA_SCRIPT_SCHEMA asks for, and this function has to check the
+    shape itself rather than trust the schema. Schema constrained
+    decoding only applies if the local Ollama is new enough to honour a
+    schema object in the `format` field, an older one accepts only
+    format: "json" and leaves the structure entirely up to the model.
+
+    The shape that matters is `body`. A model writing the body as one
+    string instead of an array of lines is valid JSON, and iterating a
+    string yields its characters, so the old code turned that into one
+    caption line per non blank character: a two sentence body became 28
+    spoken lines, each a single letter, every one of them narrated and
+    encoded into its own video segment. No error anywhere, just an
+    unusable clip after minutes of rendering. A loud failure here costs
+    one re-run instead.
+    """
     import json
 
     try:
@@ -248,9 +269,35 @@ def _script_from_ollama_response(raw_response: str) -> Script:
             f"raw response:\n{raw_response}"
         ) from e
 
-    hook = (parsed.get("hook") or "").strip()
-    lines = [line.strip() for line in parsed.get("body", []) if line and line.strip()]
-    cta = (parsed.get("cta") or "").strip()
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            f"Ollama returned a JSON {type(parsed).__name__} where the script "
+            f"schema asks for an object with hook, body and cta, raw response:"
+            f"\n{raw_response}"
+        )
+
+    body = parsed.get("body")
+    if not isinstance(body, list) or not all(isinstance(line, str) for line in body):
+        raise ValueError(
+            f"Ollama's 'body' must be a list of strings, one spoken line each, "
+            f"got {type(body).__name__}: {body!r}"
+        )
+
+    hook = _ollama_text_field(parsed, "hook")
+    cta = _ollama_text_field(parsed, "cta")
+    lines = [line.strip() for line in body if line.strip()]
     if not hook or not lines or not cta:
         raise ValueError(f"Incomplete script from Ollama: {parsed}")
     return Script(hook=hook, lines=lines, cta=cta)
+
+
+def _ollama_text_field(parsed: dict, key: str) -> str:
+    """A missing field is incomplete, a field of the wrong type is malformed."""
+    value = parsed.get(key)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(
+            f"Ollama's '{key}' must be a string, got {type(value).__name__}: {value!r}"
+        )
+    return value.strip()
