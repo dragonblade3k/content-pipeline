@@ -104,6 +104,13 @@ class LiveF1ApiFactSource(FactSource):
             "topic like 'verstappen-2024' straight to get_facts."
         )
 
+    _DRIVER_ID_HINT = (
+        "Look the driverId up with "
+        "`curl https://api.jolpi.ca/ergast/f1/<season>/drivers.json`: it is "
+        "usually the lowercase surname, but not always, Verstappen's is "
+        "'max_verstappen'."
+    )
+
     def get_facts(self, topic: str, limit: int = 5) -> List[Fact]:
         import json
         import urllib.request
@@ -118,7 +125,12 @@ class LiveF1ApiFactSource(FactSource):
         url = f"{self._BASE_URL}/{season}/drivers/{driver_id}/driverStandings.json"
         try:
             with urllib.request.urlopen(url, timeout=10) as resp:
-                data = json.loads(resp.read())
+                body = resp.read()
+        except urllib.error.HTTPError as e:
+            # Must come first: HTTPError subclasses URLError, so the clause
+            # below would otherwise swallow every status the API returns and
+            # report it as an unreachable network.
+            raise self._http_failure(url, driver_id, season, e) from e
         except (urllib.error.URLError, TimeoutError) as e:
             raise RuntimeError(
                 f"Could not reach the F1 API at {url}: {e}. If this is running "
@@ -126,7 +138,43 @@ class LiveF1ApiFactSource(FactSource):
                 "known limitation, see the class docstring."
             ) from e
 
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"The F1 API at {url} answered with something that is not JSON: "
+                f"{e}. A proxy or captive portal serving an HTML error page in "
+                "place of the response looks exactly like this."
+            ) from e
+
         return self._parse_standings(data, limit)
+
+    @classmethod
+    def _http_failure(cls, url: str, driver_id: str, season: str, error) -> Exception:
+        """
+        Turn an HTTP status into the error that describes what actually went
+        wrong. A status means the API answered, so none of these are network
+        problems and none of them should send the caller looking at their
+        network. 404 is a ValueError because it reports the same mistake as a
+        malformed topic or an empty standings list: the driverId or the season
+        is wrong.
+        """
+        if error.code == 404:
+            return ValueError(
+                f"The F1 API has no standings for driverId '{driver_id}' in "
+                f"season {season} (404 from {url}). Check both, then check the "
+                f"driverId spelling. {cls._DRIVER_ID_HINT}"
+            )
+        if error.code == 429:
+            return RuntimeError(
+                f"The F1 API is rate limiting this client (429 from {url}). "
+                "The request was fine, there were too many of them. Wait and "
+                "retry."
+            )
+        return RuntimeError(
+            f"The F1 API returned HTTP {error.code} ({error.reason}) for {url}. "
+            "The API is reachable, so this is its answer, not a network fault."
+        )
 
     @staticmethod
     def _parse_standings(data: dict, limit: int) -> List[Fact]:
@@ -135,7 +183,7 @@ class LiveF1ApiFactSource(FactSource):
             raise ValueError(
                 "No standings data in the API response, double check the "
                 "driverId and season are correct and that driver actually "
-                "raced that season."
+                f"raced that season. {LiveF1ApiFactSource._DRIVER_ID_HINT}"
             )
 
         standing = lists[0]["DriverStandings"][0]

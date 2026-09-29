@@ -190,3 +190,96 @@ def test_script_from_ollama_response_keeps_accepting_a_conforming_body():
     raw = '{"hook": "A hook.", "body": ["Fact one.", "", "   ", "Fact two."], "cta": "Follow."}'
     script = _script_from_ollama_response(raw)
     assert script.lines == ["Fact one.", "Fact two."]
+
+
+# --- The live source's network boundary -------------------------------
+#
+# urllib.error.HTTPError subclasses URLError, so a single
+# `except (URLError, TimeoutError)` clause catches every HTTP status the
+# API returns and reports it as an unreachable network. The mistake the
+# README itself warns about, a driverId that is not simply the lowercase
+# surname, arrives as a 404 and used to send the caller off to debug
+# their network instead of their topic. These pin each failure to the
+# thing that actually went wrong.
+
+
+class _FakeResponse:
+    """Minimal stand in for the object urlopen yields as a context manager."""
+
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _http_error(code, reason):
+    import urllib.error
+
+    return urllib.error.HTTPError("http://example.invalid", code, reason, {}, None)
+
+
+def _get_facts_raising(raised):
+    """Call get_facts with urlopen replaced, and return the exception raised."""
+    from unittest import mock
+
+    source = LiveF1ApiFactSource()
+    with mock.patch("urllib.request.urlopen", side_effect=raised):
+        with pytest.raises(Exception) as caught:
+            source.get_facts("verstapen-2024")
+    return caught.value
+
+
+def test_unknown_driver_id_is_reported_as_a_bad_topic_not_a_bad_network():
+    err = _get_facts_raising(_http_error(404, "Not Found"))
+    assert isinstance(err, ValueError)
+    assert "verstapen" in str(err)
+    assert "drivers.json" in str(err)
+    assert "sandbox" not in str(err).lower()
+
+
+def test_rate_limiting_is_reported_as_rate_limiting():
+    err = _get_facts_raising(_http_error(429, "Too Many Requests"))
+    assert isinstance(err, RuntimeError)
+    assert "rate limit" in str(err).lower()
+    assert "sandbox" not in str(err).lower()
+
+
+def test_other_http_statuses_name_the_status():
+    err = _get_facts_raising(_http_error(500, "Internal Server Error"))
+    assert isinstance(err, RuntimeError)
+    assert "500" in str(err)
+    assert "sandbox" not in str(err).lower()
+
+
+def test_a_genuine_network_failure_still_names_the_sandbox_limitation():
+    import urllib.error
+
+    err = _get_facts_raising(urllib.error.URLError("Name or service not known"))
+    assert isinstance(err, RuntimeError)
+    assert "sandbox" in str(err).lower()
+
+
+def test_a_non_json_body_is_reported_as_a_non_json_body():
+    from unittest import mock
+
+    source = LiveF1ApiFactSource()
+    html = b"<html><head><title>403 Forbidden</title></head></html>"
+    with mock.patch("urllib.request.urlopen", return_value=_FakeResponse(html)):
+        with pytest.raises(RuntimeError) as caught:
+            source.get_facts("norris-2024")
+    assert "not JSON" in str(caught.value)
+
+
+def test_empty_standings_also_points_at_the_driver_id_lookup():
+    with pytest.raises(ValueError) as caught:
+        LiveF1ApiFactSource._parse_standings(
+            {"MRData": {"StandingsTable": {"StandingsLists": []}}}, limit=5
+        )
+    assert "drivers.json" in str(caught.value)
