@@ -229,14 +229,80 @@ class OllamaScriptGenerator(ScriptGenerator):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 result = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            # Must come first: HTTPError subclasses URLError, so the clause
+            # below would otherwise catch every status Ollama answers with
+            # and report a server that replied as one that is not running.
+            # Same mistake, and same fix, as LiveF1ApiFactSource.get_facts.
+            raise _ollama_http_failure(self._host, self._model, e) from e
         except (urllib.error.URLError, TimeoutError) as e:
             raise RuntimeError(
-                f"Could not reach Ollama at {self._host}. Is it running, and "
-                f"have you pulled the model? (`ollama pull {self._model}`). "
-                f"Original error: {e}"
+                f"Could not reach Ollama at {self._host}. Is it running? "
+                f"Start it with `ollama serve`, or point OLLAMA_HOST at "
+                f"wherever it is listening. Original error: {e}"
             ) from e
 
         return _script_from_ollama_response(result.get("response", ""))
+
+
+def _ollama_http_failure(host: str, model: str, error) -> Exception:
+    """
+    Turn an HTTP status from Ollama into an error describing what actually
+    went wrong. A status means Ollama answered, so none of these are "is it
+    running" problems and none of them should send the caller to check that.
+
+    404 is the model not being pulled, by far the most common one, and the
+    one the old message guessed at while still leading with the wrong
+    diagnosis. 400 is the request itself being rejected, which is what an
+    Ollama too old to accept a JSON schema in `format` does with the schema
+    this class sends, the exact limitation flagged in the class docstring
+    and in _script_from_ollama_response.
+    """
+    detail = _ollama_error_detail(error)
+    quoted = f' It reported: "{detail}"' if detail else ""
+    if error.code == 404:
+        return RuntimeError(
+            f"Ollama is running at {host} but has no model named '{model}' "
+            f"(404 from its API).{quoted} Pull it with `ollama pull {model}`, "
+            f"or set OLLAMA_MODEL to a model you have already pulled."
+        )
+    if error.code == 400:
+        return RuntimeError(
+            f"Ollama at {host} rejected the request (400).{quoted} An Ollama "
+            f"older than schema constrained decoding accepts only "
+            f'format: "json" and refuses the schema object this class sends, '
+            f"which is what that looks like, see the OllamaScriptGenerator "
+            f"docstring."
+        )
+    return RuntimeError(
+        f"Ollama at {host} returned HTTP {error.code} ({error.reason}).{quoted} "
+        "Ollama is reachable, so this is its answer, not a connection fault."
+    )
+
+
+def _ollama_error_detail(error) -> str:
+    """
+    Ollama explains itself in a JSON body, {"error": "..."}, and that
+    sentence is usually the whole diagnosis. Reading it must never be able
+    to replace the HTTP failure with a failure of its own, so a body that
+    is missing, unreadable, or not the expected shape simply means there is
+    no detail to add to the status.
+    """
+    import json
+
+    try:
+        body = error.read()
+    except (OSError, ValueError, AttributeError):
+        return ""
+    if not body:
+        return ""
+    try:
+        parsed = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return body.decode("utf-8", "replace").strip()[:200]
+    if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+        return parsed["error"].strip()
+    return ""
 
 
 def _script_from_ollama_response(raw_response: str) -> Script:
