@@ -283,3 +283,92 @@ def test_empty_standings_also_points_at_the_driver_id_lookup():
             {"MRData": {"StandingsTable": {"StandingsLists": []}}}, limit=5
         )
     assert "drivers.json" in str(caught.value)
+
+
+# --- The Ollama backend's network boundary -----------------------------
+#
+# The same HTTPError-subclasses-URLError trap the live fact source fell
+# into, in a second place. A single `except (URLError, TimeoutError)`
+# clause reported every status Ollama answered with as "is Ollama
+# running?", and the two statuses that actually happen both mean it is:
+# a 404 for a model that was never pulled, and a 400 from an Ollama too
+# old to accept a JSON schema in `format`, the limitation the generator's
+# own docstring warns about. Ollama's own explanation in the response
+# body was discarded along with the status.
+
+
+def _ollama_http_error(code, reason, body=b""):
+    import io
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        "http://localhost:11434/api/generate", code, reason, {}, io.BytesIO(body)
+    )
+
+
+def _generate_raising(raised):
+    """Call generate() with urlopen replaced, and return the exception raised."""
+    from unittest import mock
+
+    from pipeline.script_gen import OllamaScriptGenerator
+
+    generator = OllamaScriptGenerator(model="llama3.1", host="http://localhost:11434")
+    facts = [Fact(text="Senna took 65 pole positions.", year=1994, category="record")]
+    with mock.patch("urllib.request.urlopen", side_effect=raised):
+        with pytest.raises(Exception) as caught:
+            generator.generate("senna", facts)
+    return caught.value
+
+
+def test_a_model_that_was_never_pulled_is_not_reported_as_a_dead_server():
+    err = _generate_raising(
+        _ollama_http_error(
+            404, "Not Found", b'{"error":"model \'llama3.1\' not found"}'
+        )
+    )
+    assert isinstance(err, RuntimeError)
+    assert "ollama pull llama3.1" in str(err)
+    assert "model 'llama3.1' not found" in str(err)
+    assert "is it running" not in str(err).lower()
+
+
+def test_a_rejected_request_points_at_the_format_field_not_the_connection():
+    err = _generate_raising(
+        _ollama_http_error(400, "Bad Request", b'{"error":"invalid format"}')
+    )
+    assert isinstance(err, RuntimeError)
+    assert "400" in str(err)
+    assert "invalid format" in str(err)
+    assert "is it running" not in str(err).lower()
+
+
+def test_other_ollama_statuses_name_the_status_and_quote_the_body():
+    err = _generate_raising(
+        _ollama_http_error(500, "Internal Server Error", b'{"error":"out of memory"}')
+    )
+    assert isinstance(err, RuntimeError)
+    assert "500" in str(err)
+    assert "out of memory" in str(err)
+    assert "is it running" not in str(err).lower()
+
+
+def test_an_unreadable_error_body_still_yields_the_status():
+    err = _generate_raising(_ollama_http_error(503, "Service Unavailable", b"<html>"))
+    assert isinstance(err, RuntimeError)
+    assert "503" in str(err)
+    assert "<html>" in str(err)
+
+
+def test_an_empty_error_body_still_yields_the_status():
+    err = _generate_raising(_ollama_http_error(502, "Bad Gateway"))
+    assert isinstance(err, RuntimeError)
+    assert "502" in str(err)
+
+
+def test_a_genuine_connection_failure_still_asks_whether_ollama_is_running():
+    import urllib.error
+
+    err = _generate_raising(urllib.error.URLError("Connection refused"))
+    assert isinstance(err, RuntimeError)
+    assert "is it running" in str(err).lower()
+    assert "ollama serve" in str(err)
