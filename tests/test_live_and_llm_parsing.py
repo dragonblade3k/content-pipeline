@@ -103,6 +103,49 @@ def test_split_script_response_rejects_missing_sections():
         _split_script_response("just some text with no labels at all")
 
 
+def test_split_script_response_does_not_absorb_the_next_label_as_content():
+    r"""
+    Regression test for a bare "HOOK:" line. The separator between a
+    label and its content used to be \s*, which swallowed the newline
+    in front of "BODY:" and so hid that label from the section
+    boundary. The hook came back as the literal text "BODY: Senna won
+    three titles.", which is then narrated as the opening line and
+    reused as the clip's title and caption, and the same sentence was
+    parsed a second time as the body.
+    """
+    raw = "HOOK:\nBODY: Senna won three titles.\nCTA: Follow for more."
+    with pytest.raises(ValueError) as excinfo:
+        _split_script_response(raw)
+    assert "HOOK" in str(excinfo.value)
+
+
+def test_split_script_response_rejects_present_but_empty_sections():
+    """
+    An empty hook or cta reaches the voice stage as a line with nothing
+    to say. _script_from_ollama_response already rejects this shape on
+    the JSON path; the labeled text path has to agree.
+    """
+    for raw in (
+        "HOOK:\nBODY: Senna won three titles.\nCTA: Follow for more.",
+        "HOOK: Here is a fact.\nBODY: Senna won three titles.\nCTA:",
+    ):
+        with pytest.raises(ValueError):
+            _split_script_response(raw)
+
+
+def test_split_script_response_allows_content_on_the_line_after_a_label():
+    """
+    Tightening the label separator to spaces and tabs must not stop a
+    model from putting a section's text on the following line, since
+    the capture itself still spans newlines.
+    """
+    raw = "HOOK:\n  The king of F1 is crowned again.\nBODY: He won nine races.\nCTA: Follow."
+    script = _split_script_response(raw)
+    assert script.hook == "The king of F1 is crowned again."
+    assert script.lines == ["He won nine races."]
+    assert script.cta == "Follow."
+
+
 def test_script_prompt_includes_every_fact():
     facts = [Fact(text="Fact A"), Fact(text="Fact B")]
     prompt = _script_prompt("verstappen-2024", facts)
