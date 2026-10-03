@@ -100,7 +100,7 @@ class AnthropicScriptGenerator(ScriptGenerator):
 
 
 def _split_script_response(text: str) -> Script:
-    """
+    r"""
     Looks for HOOK: / BODY: / CTA: labels anywhere in the text rather
     than assuming the whole response is exactly three '---' separated
     parts.
@@ -112,12 +112,26 @@ def _split_script_response(text: str) -> Script:
     script for a short form video:" before the actual content. Rather
     than fight every model into never doing that, the parser just
     finds the labeled sections and ignores whatever comes before them.
+
+    A section's content is separated from its label by spaces and tabs
+    only, never by the newline the next label is anchored to. Allowing
+    \s there let a model that emitted a bare "HOOK:" line consume the
+    newline in front of "BODY:", which hid that label from the section
+    boundary and handed the body text back as the hook, label and all.
+    Content on the line after a label still works, the capture itself
+    spans newlines.
+
+    Sections are also checked for being present but empty, the way
+    _script_from_ollama_response checks the JSON path. An empty hook or
+    cta is an incomplete script, not a script with a blank line in it:
+    it reaches the voice stage as a line with nothing to narrate, and
+    the hook additionally becomes the clip's title and caption.
     """
     import re
 
     def _section(label: str, next_labels: List[str]) -> str:
         boundary = "|".join(next_labels) if next_labels else r"$(?!)"
-        pattern = rf"{label}:\s*(.*?)(?=\n(?:{boundary}):|\Z)"
+        pattern = rf"{label}:[ \t]*(.*?)(?=\n(?:{boundary}):|\Z)"
         match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
         if not match:
             raise ValueError(f"Could not find a '{label}:' section in the model's response:\n{text}")
@@ -130,6 +144,12 @@ def _split_script_response(text: str) -> Script:
     lines = [line.strip("-• ").strip() for line in body.splitlines() if line.strip()]
     if not lines:
         raise ValueError(f"BODY section parsed empty, raw response:\n{text}")
+    for name, value in (("HOOK", hook), ("CTA", cta)):
+        if not value:
+            raise ValueError(
+                f"The '{name}:' section is present but empty, so there is no "
+                f"{name.lower()} to narrate, raw response:\n{text}"
+            )
     return Script(hook=hook, lines=lines, cta=cta)
 
 
