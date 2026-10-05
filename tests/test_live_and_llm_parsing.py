@@ -415,3 +415,110 @@ def test_a_genuine_connection_failure_still_asks_whether_ollama_is_running():
     assert isinstance(err, RuntimeError)
     assert "is it running" in str(err).lower()
     assert "ollama serve" in str(err)
+
+
+# --- The standings response's own shape --------------------------------
+#
+# The third place here where "it answered" was confused with "it
+# answered the way this code expects". The HTTP layer, the non JSON
+# body and Ollama's decoded script are all checked now, but a
+# driverStandings payload that parsed as JSON was still indexed blind:
+# a renamed or dropped field came back as a bare KeyError naming only
+# the key, from the one function the README sends the reader to when
+# the schema drifts.
+
+
+_MISSING = object()
+
+
+def _standings(season="2024", **overrides):
+    """A valid standings entry, with whatever the test wants broken."""
+    entry = {
+        "position": "1",
+        "points": "437",
+        "wins": "9",
+        "Driver": {"givenName": "Max", "familyName": "Verstappen"},
+        "Constructors": [{"name": "Red Bull"}],
+    }
+    for key, value in overrides.items():
+        if value is _MISSING:
+            entry.pop(key, None)
+        else:
+            entry[key] = value
+    standings_list = {"DriverStandings": [entry]}
+    if season is not _MISSING:
+        standings_list["season"] = season
+    return {"MRData": {"StandingsTable": {"StandingsLists": [standings_list]}}}
+
+
+def _parse_raising(data):
+    with pytest.raises(Exception) as caught:
+        LiveF1ApiFactSource._parse_standings(data, limit=5)
+    return caught.value
+
+
+def test_a_renamed_constructors_field_names_the_field_not_a_bare_keyerror():
+    err = _parse_raising(_standings(Constructors=_MISSING))
+    assert isinstance(err, RuntimeError)
+    assert "Constructors" in str(err)
+    assert "_parse_standings" in str(err)
+
+
+def test_a_missing_field_lists_the_fields_that_are_there():
+    err = _parse_raising(_standings(points=_MISSING))
+    assert "points" in str(err)
+    assert "wins" in str(err)  # the fields it does have, to compare against
+
+
+def test_an_empty_constructors_list_is_reported_as_a_missing_team_name():
+    err = _parse_raising(_standings(Constructors=[]))
+    assert isinstance(err, RuntimeError)
+    assert "no team name" in str(err)
+
+
+def test_a_driver_object_missing_a_name_part_names_that_part():
+    err = _parse_raising(_standings(Driver={"givenName": "Max"}))
+    assert isinstance(err, RuntimeError)
+    assert "familyName" in str(err)
+    assert "Driver object" in str(err)
+
+
+def test_a_standings_entry_that_is_not_an_object_is_reported_as_a_shape_problem():
+    data = {"MRData": {"StandingsTable": {"StandingsLists": [
+        {"season": "2024", "DriverStandings": ["Max Verstappen"]}
+    ]}}}
+    err = _parse_raising(data)
+    assert isinstance(err, RuntimeError)
+    assert "str" in str(err)
+
+
+def test_a_non_numeric_season_is_reported_instead_of_crashing_on_int():
+    err = _parse_raising(_standings(season="twenty twenty four"))
+    assert isinstance(err, RuntimeError)
+    assert "not a year" in str(err)
+
+
+def test_a_schema_drift_never_sends_the_caller_to_check_their_network():
+    err = _parse_raising(_standings(Constructors=_MISSING))
+    lowered = str(err).lower()
+    assert "network" not in lowered
+    assert "sandbox" not in lowered
+    assert "reach" not in lowered
+
+
+def test_an_empty_field_value_is_not_treated_as_drift():
+    facts = LiveF1ApiFactSource._parse_standings(_standings(points=""), limit=5)
+    assert "with  points" in facts[0].text  # reported as sent, not rejected
+
+
+def test_a_single_win_stays_singular_even_if_the_count_arrives_as_a_number():
+    facts = LiveF1ApiFactSource._parse_standings(_standings(wins=1), limit=5)
+    assert "won 1 race in" in facts[1].text
+
+
+
+def test_a_standings_list_with_no_season_at_all_names_the_season_field():
+    err = _parse_raising(_standings(season=_MISSING))
+    assert isinstance(err, RuntimeError)
+    assert "season" in str(err)
+    assert "standings list" in str(err)

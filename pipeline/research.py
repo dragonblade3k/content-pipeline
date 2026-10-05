@@ -176,8 +176,49 @@ class LiveF1ApiFactSource(FactSource):
             "The API is reachable, so this is its answer, not a network fault."
         )
 
-    @staticmethod
-    def _parse_standings(data: dict, limit: int) -> List[Fact]:
+    _SCHEMA_DRIFT_HINT = (
+        "The API answered, so this is its shape changing rather than a bad "
+        "topic: _parse_standings in pipeline/research.py is the only code "
+        "that reads this response, see the README's 'Connecting the free "
+        "upgrades' section."
+    )
+
+    @classmethod
+    def _field(cls, entry, key: str, where: str):
+        """
+        Read one required field out of the standings response, or say which
+        field was missing and from where.
+
+        Every other external boundary here reports what actually went
+        wrong: a status is named rather than guessed at, a non JSON body is
+        called one, Ollama's decoded script has its shape checked instead
+        of trusted. This response was the last one still indexed blind, so
+        a renamed or dropped key surfaced as a bare `KeyError:
+        'Constructors'` naming neither the API, the topic, nor this parser,
+        and saying nothing about the one thing it means: the shape assumed
+        here is gone. That is the diagnosis the class docstring and the
+        README both promise by sending the reader to this function.
+
+        A present field stays untouched even when its value is empty, since
+        an empty points string is the API reporting something and a missing
+        one is the API having changed. Only the latter is a drift.
+        """
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"The F1 API's {where} is a {type(entry).__name__} where this "
+                f"code expects an object with a '{key}' field. "
+                f"{cls._SCHEMA_DRIFT_HINT}"
+            )
+        if key not in entry:
+            present = ", ".join(sorted(entry)) or "no fields at all"
+            raise RuntimeError(
+                f"The F1 API's {where} has no '{key}' field, it has "
+                f"{present}. {cls._SCHEMA_DRIFT_HINT}"
+            )
+        return entry[key]
+
+    @classmethod
+    def _parse_standings(cls, data: dict, limit: int) -> List[Fact]:
         lists = data.get("MRData", {}).get("StandingsTable", {}).get("StandingsLists", [])
         if not lists or not lists[0].get("DriverStandings"):
             raise ValueError(
@@ -186,23 +227,52 @@ class LiveF1ApiFactSource(FactSource):
                 f"raced that season. {LiveF1ApiFactSource._DRIVER_ID_HINT}"
             )
 
-        standing = lists[0]["DriverStandings"][0]
-        season = lists[0]["season"]
-        driver = standing["Driver"]
-        name = f"{driver['givenName']} {driver['familyName']}"
-        constructor = standing["Constructors"][0]["name"]
-        wins = standing["wins"]
+        standings_list = lists[0]
+        standing = standings_list["DriverStandings"][0]
+        season = cls._field(standings_list, "season", "standings list")
+        driver = cls._field(standing, "Driver", "driver standings entry")
+        given = cls._field(driver, "givenName", "Driver object")
+        family = cls._field(driver, "familyName", "Driver object")
+        name = f"{given} {family}"
+
+        constructors = cls._field(standing, "Constructors", "driver standings entry")
+        if not isinstance(constructors, list) or not constructors:
+            raise RuntimeError(
+                f"The F1 API's driver standings entry has a 'Constructors' of "
+                f"{constructors!r}, so there is no team name to put in the "
+                f"fact. {cls._SCHEMA_DRIFT_HINT}"
+            )
+        constructor = cls._field(constructors[0], "name", "first Constructors entry")
+
+        position = cls._field(standing, "position", "driver standings entry")
+        points = cls._field(standing, "points", "driver standings entry")
+        wins = cls._field(standing, "wins", "driver standings entry")
+
+        try:
+            year = int(season)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(
+                f"The F1 API's standings list has a season of {season!r}, which "
+                f"is not a year, so there is nothing to put in Fact.year. "
+                f"{cls._SCHEMA_DRIFT_HINT}"
+            ) from e
+
+        # str() before comparing: the API sends these counts as strings, and a
+        # drift to real JSON numbers would otherwise make 1 != "1" true and
+        # narrate "won 1 races". Worth one call to keep the sentence correct
+        # on a shape this code no longer has to guess about.
+        plural = "" if str(wins) == "1" else "s"
 
         facts = [
             Fact(
-                text=f"{name} finished the {season} season in P{standing['position']} "
-                     f"with {standing['points']} points.",
-                year=int(season), category="record",
+                text=f"{name} finished the {season} season in P{position} "
+                     f"with {points} points.",
+                year=year, category="record",
             ),
             Fact(
-                text=f"{name} won {wins} race{'s' if wins != '1' else ''} in {season}, "
+                text=f"{name} won {wins} race{plural} in {season}, "
                      f"driving for {constructor}.",
-                year=int(season), category="history",
+                year=year, category="history",
             ),
         ]
         return facts[:limit]
