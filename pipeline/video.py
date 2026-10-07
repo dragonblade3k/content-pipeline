@@ -85,17 +85,56 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
         return ImageFont.load_default()
 
 
+def _break_long_word(draw: ImageDraw.ImageDraw, word: str, font: ImageFont.FreeTypeFont,
+                     max_width: int) -> List[str]:
+    """
+    Split a single word that cannot fit on a line of its own into
+    chunks that each do. Breaks between characters rather than
+    inserting a hyphen: these captions carry URLs and hashtags, where a
+    hyphen would read as part of the text and change what the viewer
+    thinks the link or tag actually is.
+
+    A lone character wider than max_width is still emitted, since there
+    is nothing left to split. That keeps the loop finite and bounds the
+    damage at one character instead of a whole word.
+    """
+    chunks, current = [], ""
+    for ch in word:
+        trial = current + ch
+        if current and draw.textlength(trial, font=font) > max_width:
+            chunks.append(current)
+            current = ch
+        else:
+            current = trial
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> List[str]:
+    """
+    Greedy word wrap. Every returned line fits inside max_width, which
+    is the whole contract: _draw_caption trusts it and draws each line
+    at a fixed x with no clipping, so a line that is too wide leaves
+    the frame rather than being cut off at the edge.
+    """
     words = text.split()
     lines, current = [], ""
     for word in words:
         trial = f"{current} {word}".strip()
         if draw.textlength(trial, font=font) <= max_width:
             current = trial
-        else:
-            if current:
-                lines.append(current)
+            continue
+        if current:
+            lines.append(current)
+            current = ""
+        if draw.textlength(word, font=font) <= max_width:
             current = word
+            continue
+        # The word will not fit on an empty line either, so no amount of
+        # starting a new line helps; it has to be split.
+        *head, current = _break_long_word(draw, word, font, max_width)
+        lines.extend(head)
     if current:
         lines.append(current)
     return lines

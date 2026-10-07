@@ -166,3 +166,71 @@ def test_resolve_music_path_accepts_a_real_file(tmp_path):
     track = tmp_path / "track.mp3"
     track.write_bytes(b"not really an mp3, but it is a file")
     assert video._resolve_music_path(str(track)) == track
+
+
+def _caption_wrap(text):
+    """_draw_caption's exact wrap setup: the 64px bold body face and the
+    WIDTH - 160 text column it lays lines out in."""
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(Image.new("RGB", (WIDTH, HEIGHT)))
+    font = video._load_font(64, bold=True)
+    max_width = WIDTH - 160
+    lines = video._wrap_text(draw, text, font, max_width)
+    widths = [draw.textlength(line, font=font) for line in lines]
+    return lines, widths, max_width
+
+
+def test_wrap_text_keeps_ordinary_text_inside_the_column():
+    lines, widths, max_width = _caption_wrap(
+        "Ayrton Senna took pole at Monaco in 1988 by a margin nobody has "
+        "come close to since, and he did it on his eleventh lap."
+    )
+    assert len(lines) > 1
+    assert all(w <= max_width for w in widths)
+
+
+def test_wrap_text_splits_a_word_too_wide_for_the_column():
+    """A word wider than the text column used to be appended as its own
+    line regardless. _draw_caption draws every line at a fixed x=80 with
+    no clipping, so that line ran off the right edge of the 1080px frame
+    with nothing reporting it. A URL in an LLM written hook is the
+    realistic trigger."""
+    text = "Watch the lap at youtube.com/watch?v=dQw4w9WgXcQ right now"
+    lines, widths, max_width = _caption_wrap(text)
+    assert all(w <= max_width for w in widths), [
+        line for line, w in zip(lines, widths) if w > max_width
+    ]
+    # the URL could not have survived whole, so it must have been split
+    assert not any("youtube.com/watch?v=dQw4w9WgXcQ" in line for line in lines)
+
+
+def test_wrap_text_loses_no_characters_when_it_splits():
+    """Splitting must be a reflow, not an edit: no character dropped and
+    no hyphen or ellipsis invented, because in a URL or a hashtag an
+    added character changes what the viewer reads the link or tag to be."""
+    text = "Senna's #BrazilianGrandPrixNineteenNinetyOne drive was unreal"
+    lines, _, _ = _caption_wrap(text)
+    assert "".join(line.replace(" ", "") for line in lines) == "".join(text.split())
+
+
+def test_wrap_text_does_not_split_a_word_that_fits_on_its_own_line():
+    """The split path must only engage when starting a fresh line cannot
+    help. A long-but-fitting word pushed onto its own line stays whole."""
+    lines, widths, max_width = _caption_wrap("Senna Verstappen championship")
+    assert all(w <= max_width for w in widths)
+    assert "championship" in lines
+
+
+def test_break_long_word_emits_no_empty_chunks_and_terminates():
+    """A single character wider than the column has nothing left to
+    split, so it is emitted as-is. The guard that allows that must not
+    also let an empty chunk through, which would render as a blank
+    caption line and consume vertical space for nothing."""
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(Image.new("RGB", (WIDTH, HEIGHT)))
+    font = video._load_font(64, bold=True)
+    chunks = video._break_long_word(draw, "WWWWW", font, max_width=1)
+    assert chunks == list("WWWWW")
+    assert all(chunks)
