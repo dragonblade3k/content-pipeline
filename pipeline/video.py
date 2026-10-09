@@ -30,7 +30,7 @@ how to point PIPELINE_MUSIC_PATH at it.
 """
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import math
 import random
 import subprocess
@@ -210,6 +210,60 @@ class VoxelDropBackground(BackgroundRenderer):
         return Image.blend(img, overlay, 0.45)
 
 
+# The caption's text area. _wrap_text bounds the horizontal axis; these
+# bound the vertical one, which nothing used to. The top clears the topic
+# label and its accent rule, the bottom keeps the last line off the frame
+# edge.
+_CAPTION_TOP = 260
+_CAPTION_BOTTOM = HEIGHT - 140
+_BODY_FONT_SIZE = 64
+_MIN_BODY_FONT_SIZE = 28
+# 84px of leading at the 64px body size, held proportional as the body
+# shrinks so a fitted block stays tight instead of airy.
+_LINE_HEIGHT_RATIO = 84 / 64
+
+
+def _fit_caption(draw: ImageDraw.ImageDraw, text: str, max_width: int,
+                 max_height: int) -> Tuple[ImageFont.FreeTypeFont, List[str], int]:
+    """
+    Pick the largest body size whose wrapped caption fits the text area
+    and return that font together with the lines and leading to draw.
+
+    _wrap_text's contract covers one axis: every line it hands back fits
+    inside max_width. Nothing covered the other one. A caption that
+    wrapped to more lines than the frame is tall was still drawn from a
+    start y centred on the frame, which goes negative, so the opening
+    lines were cut off by the top edge, the closing ones by the bottom,
+    and the lines between them ran straight through the topic label. The
+    clip encoded and concatenated without complaint, same as the word
+    too wide for the column did before it was split.
+
+    One spoken line is one caption card, and a spoken line is only as
+    short as stage 2 made it. The plain text body parser splits on
+    newlines, so a model that answers with the body as a single
+    paragraph rather than one line per fact yields a caption several
+    hundred characters long. That is a clean parse and an ordinary
+    Script everywhere else in the pipeline, so this is the only place
+    that can catch it.
+
+    Shrinking rather than cropping, because the words are the clip and a
+    smaller line still reads. Wrapping has to be redone at each size,
+    since how many lines a caption takes depends on the face being
+    measured. The floor stops the fit from reaching a size nobody could
+    read on a phone; it sits well past any caption a script produces,
+    thousands of characters, and _draw_caption clamps a block that
+    somehow still does not fit instead of starting it off frame.
+    """
+    size = _BODY_FONT_SIZE
+    while True:
+        font = _load_font(size, bold=True)
+        lines = _wrap_text(draw, text, font, max_width)
+        line_height = round(size * _LINE_HEIGHT_RATIO)
+        if line_height * len(lines) <= max_height or size <= _MIN_BODY_FONT_SIZE:
+            return font, lines, line_height
+        size -= 4
+
+
 def _draw_caption(img: Image.Image, text: str, label: str) -> Image.Image:
     draw = ImageDraw.Draw(img)
 
@@ -217,12 +271,17 @@ def _draw_caption(img: Image.Image, text: str, label: str) -> Image.Image:
     draw.text((80, 140), label.upper(), font=label_font, fill=ACCENT_COLOR)
     draw.rectangle([80, 200, 280, 205], fill=ACCENT_COLOR)
 
-    body_font = _load_font(64, bold=True)
     max_width = WIDTH - 160
-    lines = _wrap_text(draw, text, body_font, max_width)
-    line_height = 84
+    body_font, lines, line_height = _fit_caption(
+        draw, text, max_width, _CAPTION_BOTTOM - _CAPTION_TOP
+    )
     total_height = line_height * len(lines)
+    # Centred on the frame exactly as before, then clamped into the text
+    # area. A caption that already fitted is drawn where it always was.
     y = (HEIGHT - total_height) // 2
+    if y + total_height > _CAPTION_BOTTOM:
+        y = _CAPTION_BOTTOM - total_height
+    y = max(y, _CAPTION_TOP)
     for line in lines:
         draw.text((80, y), line, font=body_font, fill=TEXT_COLOR)
         y += line_height

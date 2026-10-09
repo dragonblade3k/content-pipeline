@@ -234,3 +234,100 @@ def test_break_long_word_emits_no_empty_chunks_and_terminates():
     chunks = video._break_long_word(draw, "WWWWW", font, max_width=1)
     assert chunks == list("WWWWW")
     assert all(chunks)
+
+
+# A body the script generator handed over as one paragraph instead of one
+# line per fact, which is a clean parse for the plain text parser and so
+# arrives at the video stage as a single very long caption.
+_PARAGRAPH_BODY = (
+    "Ayrton Senna took pole position at Monaco in 1988 by one point four two "
+    "seconds over Alain Prost in the identical McLaren, then crashed out of "
+    "the race while leading by nearly a minute, and later said he had been "
+    "driving on instinct in a way he never experienced again. He went on to "
+    "win the championship that year with eight victories, a record at the "
+    "time, and Monaco became the race he was asked about for the rest of his "
+    "career, not for the win he threw away but for the lap that preceded it, "
+    "a lap his own team principal described as the fastest anyone had driven "
+    "a Formula 1 car around a street circuit."
+)
+
+
+def _body_text_rows(img):
+    """Rows of the frame that contain caption body text, by its exact colour."""
+    px = img.load()
+    rows = []
+    for y in range(video.HEIGHT):
+        for x in range(video.WIDTH):
+            if px[x, y] == video.TEXT_COLOR:
+                rows.append(y)
+                break
+    return rows
+
+
+def test_fit_caption_keeps_an_ordinary_caption_at_the_full_body_size():
+    img = Image.new("RGB", (video.WIDTH, video.HEIGHT), video.BG_COLOR)
+    draw = video.ImageDraw.Draw(img)
+
+    font, lines, line_height = video._fit_caption(
+        draw, "Senna took pole at Monaco in 1988 by one point four two seconds.",
+        video.WIDTH - 160, video._CAPTION_BOTTOM - video._CAPTION_TOP,
+    )
+
+    assert line_height == 84
+    assert lines
+    assert line_height * len(lines) <= video._CAPTION_BOTTOM - video._CAPTION_TOP
+
+
+def test_fit_caption_shrinks_a_caption_that_would_not_fit_the_frame():
+    img = Image.new("RGB", (video.WIDTH, video.HEIGHT), video.BG_COLOR)
+    draw = video.ImageDraw.Draw(img)
+    max_width = video.WIDTH - 160
+    area = video._CAPTION_BOTTOM - video._CAPTION_TOP
+
+    full_size_lines = video._wrap_text(
+        draw, _PARAGRAPH_BODY, video._load_font(64, bold=True), max_width
+    )
+    assert 84 * len(full_size_lines) > area, "fixture no longer overflows the frame"
+
+    font, lines, line_height = video._fit_caption(draw, _PARAGRAPH_BODY, max_width, area)
+
+    assert line_height < 84
+    assert line_height * len(lines) <= area
+    assert all(draw.textlength(line, font=font) <= max_width for line in lines)
+
+
+def test_fit_caption_never_shrinks_below_the_readable_floor():
+    img = Image.new("RGB", (video.WIDTH, video.HEIGHT), video.BG_COLOR)
+    draw = video.ImageDraw.Draw(img)
+
+    _, _, line_height = video._fit_caption(
+        draw, _PARAGRAPH_BODY * 20, video.WIDTH - 160,
+        video._CAPTION_BOTTOM - video._CAPTION_TOP,
+    )
+
+    assert line_height >= round(video._MIN_BODY_FONT_SIZE * video._LINE_HEIGHT_RATIO)
+
+
+def test_draw_caption_keeps_a_long_caption_inside_the_text_area():
+    img = video._draw_caption(
+        SolidBackground().frame(0, 0.0), _PARAGRAPH_BODY, "senna",
+    )
+
+    rows = _body_text_rows(img)
+    assert rows, "no caption body text was drawn at all"
+    assert min(rows) >= video._CAPTION_TOP, "caption runs into the label or off the top"
+    assert max(rows) < video._CAPTION_BOTTOM, "caption runs off the bottom of the frame"
+
+
+def test_draw_caption_leaves_a_short_caption_where_it_always_was():
+    text = "Senna took pole at Monaco in 1988 by one point four two seconds."
+    img = video._draw_caption(SolidBackground().frame(0, 0.0), text, "senna")
+
+    probe = Image.new("RGB", (video.WIDTH, video.HEIGHT), video.BG_COLOR)
+    draw = video.ImageDraw.Draw(probe)
+    lines = video._wrap_text(draw, text, video._load_font(64, bold=True), video.WIDTH - 160)
+    expected_top = (video.HEIGHT - 84 * len(lines)) // 2
+
+    rows = _body_text_rows(img)
+    assert rows
+    assert expected_top <= min(rows) < expected_top + 84
