@@ -331,3 +331,50 @@ def test_draw_caption_leaves_a_short_caption_where_it_always_was():
     rows = _body_text_rows(img)
     assert rows
     assert expected_top <= min(rows) < expected_top + 84
+
+
+# The concat demuxer's list file is written by assemble_video and read
+# back by ffmpeg, so the only thing that matters about a path in it is
+# that the demuxer's quote parser recovers the path byte for byte.
+# shlex stands in for that parser here: both take a single quoted
+# string and both accept '\'' as a literal quote inside one.
+
+
+def _parsed_back(path):
+    import shlex
+
+    entry = video._concat_entry(Path(path))
+    assert entry.endswith("\n")
+    fields = shlex.split(entry.rstrip("\n"))
+    assert fields[0] == "file"
+    return fields[1]
+
+
+def test_concat_entry_quotes_an_ordinary_path():
+    assert video._concat_entry(Path("/tmp/work/segment_00.mp4")) == (
+        "file '/tmp/work/segment_00.mp4'\n"
+    )
+
+
+def test_concat_entry_escapes_a_single_quote_in_the_path():
+    # A repo checked out under a directory with an apostrophe in it. The
+    # unescaped form closed the quoted string early and ffmpeg reported
+    # "Impossible to open .../Shantanus", naming neither the real path
+    # nor the apostrophe that broke it.
+    entry = video._concat_entry(Path("/home/s/Shantanu's projects/seg_00.mp4"))
+    assert entry == "file '/home/s/Shantanu'\\''s projects/seg_00.mp4'\n"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/tmp/outputs/_work/senna/segment_00.mp4",
+        "/home/s/Shantanu's projects/content-pipeline/outputs/seg_01.mp4",
+        "/tmp/it's/o'clock/seg_02.mp4",
+        "/tmp/'leading/seg_03.mp4",
+        "/tmp/trailing'/seg_04.mp4",
+        "/tmp/a space/and-dash/seg_05.mp4",
+    ],
+)
+def test_concat_entry_round_trips_every_path_unchanged(path):
+    assert _parsed_back(path) == path

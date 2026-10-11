@@ -389,6 +389,30 @@ def _mix_in_music(video_path: Path, music_path: Path, out_path: Path) -> Path:
     return out_path
 
 
+def _concat_entry(path: Path) -> str:
+    """
+    One line of the ffmpeg concat demuxer's list file, with the path
+    quoted the way that demuxer actually parses.
+
+    `-safe 0` already lets an absolute path through, so the remaining
+    assumption in writing "file '<path>'" was that the path contains no
+    single quote. A single quote inside the quoted string closes it
+    early, and the demuxer reads the rest of the line as further
+    arguments: a repo checked out under "Shantanu's projects" turned
+    every segment into "Impossible to open .../Shantanus" followed by
+    "concat.txt: No such file or directory", which names the list file
+    rather than the path that broke and points nowhere near the
+    apostrophe. The concat step is the last one in the run, so the whole
+    render is already spent by then.
+
+    The demuxer takes the shell's escape for this, ending the quoted
+    string, emitting an escaped quote, and reopening it, so a literal
+    quote is written as '\''. Every other character is already safe
+    inside single quotes, which is why this is the only one handled.
+    """
+    return "file '{}'\n".format(str(path).replace("'", "'\\''"))
+
+
 def assemble_video(
     voice_lines: List[VoiceLine],
     label: str,
@@ -407,10 +431,13 @@ def assemble_video(
         for i, vl in enumerate(voice_lines)
     ]
 
+    # utf-8 explicitly: the demuxer reads this file as utf-8, while
+    # open() defaults to the locale encoding, so a non-ascii segment path
+    # is written in something else entirely on a stock Windows shell.
     concat_list = work_dir / "concat.txt"
-    with open(concat_list, "w") as f:
+    with open(concat_list, "w", encoding="utf-8") as f:
         for p in segment_paths:
-            f.write(f"file '{p.resolve()}'\n")
+            f.write(_concat_entry(p.resolve()))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     concat_target = out_path if not music_path else work_dir / "_no_music.mp4"
