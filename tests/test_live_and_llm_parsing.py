@@ -522,3 +522,108 @@ def test_a_standings_list_with_no_season_at_all_names_the_season_field():
     assert isinstance(err, RuntimeError)
     assert "season" in str(err)
     assert "standings list" in str(err)
+
+
+# --- The response envelope, read the same way as everything inside it ---
+#
+# _field exists so a renamed or retyped key names the API, the field and
+# this parser instead of surfacing as a bare KeyError. The three reads
+# that get down to the standings list were the last ones not using it:
+# they walked the envelope with chained .get calls and a blind [0], so a
+# drift above the standings entry came out as `AttributeError: 'str'
+# object has no attribute 'get'`, which names nothing. A missing MRData
+# was worse than useless, reported as a bad driverId and sending the
+# reader to recheck a topic that was never the problem.
+
+
+def _drift_message(data):
+    err = _parse_raising(data)
+    assert isinstance(err, RuntimeError), f"got {type(err).__name__}"
+    text = str(err)
+    assert "_parse_standings" in text  # points at the one place to fix it
+    lowered = text.lower()
+    for misdirection in ("network", "sandbox", "reach", "drivers.json"):
+        assert misdirection not in lowered, f"{misdirection!r} in {text!r}"
+    return text
+
+
+def test_a_retyped_mrdata_names_mrdata_instead_of_a_bare_attributeerror():
+    text = _drift_message({"MRData": "service temporarily unavailable"})
+    assert "MRData" in text
+    assert "str" in text
+
+
+def test_a_retyped_standings_table_names_the_standings_table():
+    text = _drift_message({"MRData": {"StandingsTable": "none"}})
+    assert "StandingsTable" in text
+    assert "str" in text
+
+
+def test_a_standings_lists_that_is_not_an_array_is_reported_as_one():
+    text = _drift_message(
+        {"MRData": {"StandingsTable": {"StandingsLists": "2024"}}}
+    )
+    assert "StandingsLists" in text
+    assert "array" in text
+    assert "str" in text
+
+
+def test_a_standings_lists_entry_that_is_not_an_object_names_the_list():
+    text = _drift_message(
+        {"MRData": {"StandingsTable": {"StandingsLists": ["2024"]}}}
+    )
+    assert "standings list" in text
+
+
+def test_a_driver_standings_that_is_not_an_array_is_reported_as_one():
+    text = _drift_message(
+        {"MRData": {"StandingsTable": {"StandingsLists": [
+            {"season": "2024", "DriverStandings": {"0": {"position": "1"}}}
+        ]}}}
+    )
+    assert "DriverStandings" in text
+    assert "array" in text
+    assert "dict" in text
+
+
+def test_a_response_with_no_mrdata_is_drift_not_a_bad_driver_id():
+    # The assertion with teeth is the one inside _drift_message: this used
+    # to raise ValueError telling the caller to check the driverId and the
+    # season, neither of which had anything to do with it.
+    text = _drift_message({"Response": {"error": "gone"}})
+    assert "MRData" in text
+    assert "Response" in text  # the fields it does have, to compare against
+
+
+def test_a_response_body_that_is_not_an_object_at_all_is_reported():
+    text = _drift_message([{"MRData": {}}])
+    assert "MRData" in text
+    assert "list" in text
+
+
+# An empty array is the API answering about a real season, so the two
+# places one can arrive have to stay distinguishable from drift.
+
+
+def test_an_empty_standings_lists_still_reports_no_data():
+    err = _parse_raising({"MRData": {"StandingsTable": {"StandingsLists": []}}})
+    assert isinstance(err, ValueError)
+    assert "drivers.json" in str(err)
+
+
+def test_an_empty_driver_standings_still_reports_no_data():
+    err = _parse_raising(
+        {"MRData": {"StandingsTable": {"StandingsLists": [
+            {"season": "2024", "DriverStandings": []}
+        ]}}}
+    )
+    assert isinstance(err, ValueError)
+    assert "drivers.json" in str(err)
+
+
+def test_a_retyped_constructors_is_reported_as_an_array_drift():
+    # Was a hand rolled isinstance check duplicating _list_field; folding
+    # it in is what keeps the type drift message consistent with the rest.
+    text = _drift_message(_standings(Constructors={"name": "Red Bull"}))
+    assert "Constructors" in text
+    assert "array" in text
