@@ -111,6 +111,12 @@ class LiveF1ApiFactSource(FactSource):
         "'max_verstappen'."
     )
 
+    _NO_DATA_MESSAGE = (
+        "No standings data in the API response, double check the driverId "
+        "and season are correct and that driver actually raced that "
+        "season. " + _DRIVER_ID_HINT
+    )
+
     def get_facts(self, topic: str, limit: int = 5) -> List[Fact]:
         import json
         import urllib.request
@@ -218,25 +224,56 @@ class LiveF1ApiFactSource(FactSource):
         return entry[key]
 
     @classmethod
-    def _parse_standings(cls, data: dict, limit: int) -> List[Fact]:
-        lists = data.get("MRData", {}).get("StandingsTable", {}).get("StandingsLists", [])
-        if not lists or not lists[0].get("DriverStandings"):
-            raise ValueError(
-                "No standings data in the API response, double check the "
-                "driverId and season are correct and that driver actually "
-                f"raced that season. {LiveF1ApiFactSource._DRIVER_ID_HINT}"
+    def _list_field(cls, entry, key: str, where: str) -> list:
+        """
+        Read one required field that has to be a JSON array.
+
+        _field rejects a container that is not an object, but a field
+        whose value arrives as the wrong kind of container is the same
+        drift and reads just as badly when it is indexed blind: a
+        'StandingsLists' that came back as a string makes lists[0] a
+        single character and the next read an AttributeError naming
+        neither the API nor this parser.
+
+        An empty array is not a drift. The API reporting no standings is
+        a real answer about a real season, so emptiness is left for the
+        caller to interpret and only the type is enforced here.
+        """
+        value = cls._field(entry, key, where)
+        if not isinstance(value, list):
+            raise RuntimeError(
+                f"The F1 API's {where} has a '{key}' of type "
+                f"{type(value).__name__} where this code expects an array. "
+                f"{cls._SCHEMA_DRIFT_HINT}"
             )
+        return value
+
+    @classmethod
+    def _parse_standings(cls, data: dict, limit: int) -> List[Fact]:
+        mrdata = cls._field(data, "MRData", "response body")
+        table = cls._field(mrdata, "StandingsTable", "MRData object")
+        lists = cls._list_field(table, "StandingsLists", "StandingsTable object")
+        if not lists:
+            raise ValueError(cls._NO_DATA_MESSAGE)
 
         standings_list = lists[0]
-        standing = standings_list["DriverStandings"][0]
+        standings = cls._list_field(
+            standings_list, "DriverStandings", "standings list"
+        )
+        if not standings:
+            raise ValueError(cls._NO_DATA_MESSAGE)
+
+        standing = standings[0]
         season = cls._field(standings_list, "season", "standings list")
         driver = cls._field(standing, "Driver", "driver standings entry")
         given = cls._field(driver, "givenName", "Driver object")
         family = cls._field(driver, "familyName", "Driver object")
         name = f"{given} {family}"
 
-        constructors = cls._field(standing, "Constructors", "driver standings entry")
-        if not isinstance(constructors, list) or not constructors:
+        constructors = cls._list_field(
+            standing, "Constructors", "driver standings entry"
+        )
+        if not constructors:
             raise RuntimeError(
                 f"The F1 API's driver standings entry has a 'Constructors' of "
                 f"{constructors!r}, so there is no team name to put in the "
